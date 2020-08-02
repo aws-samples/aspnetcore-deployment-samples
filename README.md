@@ -1,11 +1,12 @@
-## My Project
+## ASP.NET Deployment Samples
 
-TODO: Fill this README out!
+This repository demonstrates several ways in which an ASP.NET Core application can be deployed to your AWS environment:
 
-Be sure to:
-
-* Change the title in this README
-* Edit your repository description on GitHub
+* EC2 UserData using AWS::CloudFormation::Init
+* EC2 UserData as a script
+* SSM Automation Document
+* CodeDeploy
+* CodeDeploy using a Blue/Green deployment
 
 ## Security
 

@@ -1,0 +1,73 @@
+AWSTemplateFormatVersion: 2010-09-09
+Description: >-
+  This template creates an EC2 instance that installs a .NET application
+  on launch.
+Parameters:
+  WindowsAMIId:
+    Description: >-
+        Use the below value to automatically look up the latest published
+        AMI ID for Windows Server 2019, or supply your own.
+    Type: AWS::SSM::Parameter::Value<AWS::EC2::Image::Id>
+    Default: '/aws/service/ami-windows-latest/Windows_Server-2019-English-Core-Base'  
+Resources:
+  AppServerSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: Enable HTTP and RDP
+      SecurityGroupIngress:
+        - IpProtocol: tcp
+          FromPort: 80
+          ToPort: 80
+          CidrIp: 0.0.0.0/0
+  AppServerEIP:
+    Type: AWS::EC2::EIP
+    Properties:
+      InstanceId:
+        Ref: AppServer
+  AppServer:
+    Type: AWS::EC2::Instance
+    Properties:
+      InstanceType: t3.micro
+      ImageId: !Ref WindowsAMIId
+      SecurityGroups: [!Ref AppServerSecurityGroup]
+      UserData:
+        Fn::Base64: !Sub |
+          <powershell>
+          $VerbosePreference = "Continue"
+          try {
+            # Download and install the ASP.NET Core Hosting Bundle
+            mkdir C:\DotNet
+            Invoke-WebRequest -UseBasicParsing -Uri 'https://download.visualstudio.microsoft.com/download/pr/9b9f4a6e-aef8-41e0-90db-bae1b0cf4e34/4ab93354cdff8991d91a9f40d022d450/dotnet-hosting-3.1.6-win.exe' -OutFile C:\DotNet\aspdotnet-3.1-installer.exe
+            Start-Process -Wait C:\DotNet\aspdotnet-3.1-installer.exe -ArgumentList '/install','/quiet','/norestart'
+            # Download and install our application
+            mkdir C:\AppServer
+            Invoke-WebRequest -UseBasicParsing -Uri 'http://s3.amazonaws.com/us-east-1.andyhoppatamazon.com/samples/ASPNETCoreDemo.zip' -OutFile C:\AppServer\ASPNETCoreDemo.zip
+            Expand-Archive C:\AppServer\ASPNetCoreDemo.zip C:\AppServer\
+            # Register and start our service
+            New-Service ASPNetCoreDemo -BinaryPathName "C:\AppServer\ASPNETCoreDemo.exe --service --urls http://+:80"
+            Start-Service ASPNetCoreDemo
+            # Open the firewall to allow port 80
+            netsh advfirewall firewall add rule name="ASPNetCoreDemo" dir=in action=allow protocol=TCP localport=80
+            Write-Verbose "Signaling completion to WaitHandle"
+            Invoke-WebRequest -UseBasicParsing -Method PUT -Body $( ConvertTo-Json @{ "Status" = "SUCCESS"; "UniqueId"=[System.Guid]::NewGuid(); "Data"="Instance initialized successfully." } ) -Uri "${ AppServerWaitHandle }"
+          }
+          catch {
+            $itemName = $_.Exception.ItemName;
+            $errorMessage = $_.Exception.Message;
+            Write-Host "ERROR: $itemName - $errorMessage"
+            Invoke-WebRequest -UseBasicParsing -Method PUT -Body $( ConvertTo-Json @{ "Status" = "FAILURE"; "UniqueId"=[System.Guid]::NewGuid(); "Data"=$errorMessage } ) -Uri "${ AppServerWaitHandle }"
+          }
+          </powershell>
+  AppServerWaitHandle:
+    Type: AWS::CloudFormation::WaitConditionHandle
+  AppServerWaitCondition:
+    Type: AWS::CloudFormation::WaitCondition
+    DependsOn: AppServer
+    Properties:
+      Handle: !Ref AppServerWaitHandle
+      Timeout: 600
+Outputs:
+  AppServerURL:
+    Value: !Sub "http://${AppServerEIP}"
+    Description: >-
+      Application server URL.

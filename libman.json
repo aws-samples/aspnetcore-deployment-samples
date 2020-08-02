@@ -1,0 +1,30 @@
+{
+  "version": "1.0",
+  "defaultProvider": "cdnjs",
+  "libraries": [
+    {
+      "library": "popper.js@2.4.2",
+      "destination": "wwwroot/lib/popper.js/"
+    },
+    {
+      "library": "modernizr@2.8.3",
+      "destination": "wwwroot/lib/modernizr/"
+    },
+    {
+      "library": "jquery@3.5.1",
+      "destination": "wwwroot/lib/jquery/"
+    },
+    {
+      "library": "jquery-validation-unobtrusive@3.2.11",
+      "destination": "wwwroot/lib/jquery-validation-unobtrusive/"
+    },
+    {
+      "library": "font-awesome@4.7.0",
+      "destination": "wwwroot/lib/font-awesome/"
+    },
+    {
+      "library": "twitter-bootstrap@3.4.1",
+      "destination": "wwwroot/lib/twitter-bootstrap/"
+    }
+  ]
+}

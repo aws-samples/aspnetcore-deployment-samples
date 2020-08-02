@@ -1,0 +1,10 @@
+[
+  {
+    "outputFileName": "wwwroot/css/site.min.css",
+    "inputFiles": [
+      "wwwroot/lib/twitter-bootstrap/css/bootstrap.min.css",
+      "wwwroot/lib/font-awesome/css/font-awesome.min.css",
+      "wwwroot/css/Site.css"
+    ]
+  }
+]

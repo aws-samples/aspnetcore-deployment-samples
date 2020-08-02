@@ -1,0 +1,91 @@
+description: |-
+  # Install-AppServer
+  This sample document automates the process of deploying an ASP.NET Core application to one or more EC2 instances.
+schemaVersion: '0.3'
+parameters:
+  InstanceId:
+    type: StringList
+mainSteps:
+  - name: GetASPNETRuntime
+    action: 'aws:runCommand'
+    inputs:
+      DocumentName: AWS-RunPowerShellScript
+      InstanceIds: '{{InstanceId}}'
+      Parameters:
+        commands: |
+          $dotnetExe = "C:\Program Files\dotnet\dotnet.exe"
+          if (get-command -ErrorAction Ignore $dotnetExe) {
+            $runtimes = &$dotnetExe --list-runtimes
+          } else {
+            $runtimes = @()
+          }
+          $aspNetRuntimeVersion = $runtimes | where {$_ -match "AspNetCore\.App (3\.1\.\d)"} | %{ $Matches.1 } | Select -First 1
+          echo $aspNetRuntimeVersion
+  - name: DependencyCheck
+    action: 'aws:executeScript'
+    inputs:
+      Runtime: PowerShell Core 6.0
+      Script: |-
+        # Save assumption: install unless we find a equal or greater version
+        $installRuntime = $true
+
+        $desiredVersion = New-Object System.Version("3.1.6")
+
+        $inputPayload = $env:InputPayload | ConvertFrom-Json; 
+
+        $actualVerison = New-Object System.Version("0.0.0.0")
+        if ([System.Version]::TryParse($inputPayload.aspnetRuntimeVersion, [ref]$actualVerison)) {
+          $installRuntime = $actualVersion -ge $desiredVersion
+        }
+        return @{installRuntime=$installRuntime}
+      InputPayload:
+        aspnetRuntimeVersion: '{{GetASPNETRuntime.Output}}'
+    outputs:
+      - Name: installRuntime
+        Selector: $.Payload.installRuntime
+        Type: Boolean
+  - name: ChooseNextStep
+    action: 'aws:branch'
+    inputs:
+      Choices:
+        - NextStep: InstallApplication
+          Variable: '{{DependencyCheck.installRuntime}}'
+          BooleanEquals: false
+      Default: InstallASPNETRuntime
+  - name: InstallASPNETRuntime
+    action: 'aws:runCommand'
+    inputs:
+      DocumentName: AWS-RunPowerShellScript
+      InstanceIds: '{{InstanceId}}'
+      Parameters:
+        commands: |
+          mkdir C:\DotNet
+          Invoke-WebRequest -UseBasicParsing -Uri 'https://download.visualstudio.microsoft.com/download/pr/9b9f4a6e-aef8-41e0-90db-bae1b0cf4e34/4ab93354cdff8991d91a9f40d022d450/dotnet-hosting-3.1.6-win.exe' -OutFile C:\DotNet\aspdotnet-3.1-installer.exe
+          Start-Process -Wait C:\DotNet\aspdotnet-3.1-installer.exe -ArgumentList '/install','/quiet','/norestart'
+  - name: InstallApplication
+    action: 'aws:runCommand'
+    inputs:
+      DocumentName: AWS-RunPowerShellScript
+      InstanceIds: '{{InstanceId}}'
+      Parameters:
+        commands: |
+          # Stop the service if it was already running
+          if (Get-Service ASPNETCoreDemo -ErrorAction Ignore) { 
+            Stop-Service ASPNETCoreDemo
+          }
+          # Create the folder if it doesn't exist
+          if (-not (Test-Path C:\AppServer)) {
+            mkdir C:\AppServer
+          } else {
+              # Empty the folder if it exists
+              rm -R -Force C:\AppServer\*
+          }
+          # Download the latest revision
+          Invoke-WebRequest -UseBasicParsing -Uri 'http://s3.amazonaws.com/us-east-1.andyhoppatamazon.com/samples/ASPNETCoreDemo.zip' -OutFile C:\AppServer\ASPNETCoreDemo.zip
+          Expand-Archive C:\AppServer\ASPNetCoreDemo.zip C:\AppServer\
+          # Create the service if it didn't already exist
+          if (-not (Get-Service ASPNETCoreDemo -ErrorAction Ignore)) { 
+            New-Service ASPNETCoreDemo -BinaryPathName "C:\AppServer\ASPNETCoreDemo.exe --service --urls http://+:80"
+          }
+          Start-Service ASPNETCoreDemo
+          netsh advfirewall firewall add rule name="ASPNetCoreDemo" dir=in action=allow protocol=TCP localport=80

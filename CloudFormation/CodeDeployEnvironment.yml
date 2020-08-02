@@ -1,0 +1,512 @@
+AWSTemplateFormatVersion: 2010-09-09
+Description: Create CodeDeploy deployment to EC2
+
+Parameters:
+  DeploymentMode:
+    Type: String
+    AllowedValues: ["In-Place", "Blue/Green"]
+    Default: "In-Place"
+
+  WindowsAmiId:
+    Default: /aws/service/ami-windows-latest/Windows_Server-2019-English-Full-Base
+    Type: "AWS::SSM::Parameter::Value<AWS::EC2::Image::Id>"
+Mappings:
+  SubnetConfig:
+    VPC:
+      CIDR: 10.10.10.0/24
+    PublicSubnet1:
+      CIDR: 10.10.10.0/27
+    PrivateSubnet1:
+      CIDR: 10.10.10.32/27
+    PublicSubnet2:
+      CIDR: 10.10.10.64/27
+    PrivateSubnet2:
+      CIDR: 10.10.10.96/27
+Conditions:
+  UseBlueGreen: !Equals [ !Ref DeploymentMode, "Blue/Green" ]
+
+Resources:
+  ## VPC & subnets
+  VPC:
+    Type: AWS::EC2::VPC
+    Properties:
+      EnableDnsSupport: "true"
+      EnableDnsHostnames: "true"
+      CidrBlock: !FindInMap
+        - SubnetConfig
+        - VPC
+        - CIDR
+      Tags:
+        - Key: Name
+          Value: !Sub ${AWS::StackName}-VPC
+        - Key: Application
+          Value: !Ref "AWS::StackName"
+
+  PublicSubnet1:
+    Type: AWS::EC2::Subnet
+    Properties:
+      AvailabilityZone: !Select
+        - 0
+        - Fn::GetAZs: ""
+      VpcId: !Ref "VPC"
+      CidrBlock: !FindInMap
+        - SubnetConfig
+        - PublicSubnet1
+        - CIDR
+      Tags:
+        - Key: Name
+          Value: !Sub ${AWS::StackName}-PublicSubnet1
+        - Key: Application
+          Value: !Ref "AWS::StackName"
+        - Key: Description
+          Value: Arm Public Resources
+  PrivateSubnet1:
+    Type: AWS::EC2::Subnet
+    Properties:
+      AvailabilityZone: !Select
+        - 0
+        - Fn::GetAZs: ""
+      VpcId: !Ref "VPC"
+      CidrBlock: !FindInMap
+        - SubnetConfig
+        - PrivateSubnet1
+        - CIDR
+      Tags:
+        - Key: Name
+          Value: !Sub ${AWS::StackName}-PrivateSubnet1
+        - Key: Application
+          Value: !Ref "AWS::StackName"
+        - Key: Description
+          Value: ARM Private Resources
+  PublicSubnet2:
+    Type: AWS::EC2::Subnet
+    Properties:
+      AvailabilityZone: !Select
+        - 1
+        - Fn::GetAZs: ""
+      VpcId: !Ref "VPC"
+      CidrBlock: !FindInMap
+        - SubnetConfig
+        - PublicSubnet2
+        - CIDR
+      Tags:
+        - Key: Name
+          Value: !Sub ${AWS::StackName}-PublicSubnet2
+        - Key: Application
+          Value: !Ref "AWS::StackName"
+        - Key: Description
+          Value: Public Resources
+  PrivateSubnet2:
+    Type: AWS::EC2::Subnet
+    Properties:
+      AvailabilityZone: !Select
+        - 1
+        - Fn::GetAZs: ""
+      VpcId: !Ref "VPC"
+      CidrBlock: !FindInMap
+        - SubnetConfig
+        - PrivateSubnet2
+        - CIDR
+      Tags:
+        - Key: Name
+          Value: !Sub ${AWS::StackName}-PrivateSubnet2
+        - Key: Application
+          Value: !Ref "AWS::StackName"
+        - Key: Description
+          Value: Private Resources
+  ## Internet access
+  InternetGateway:
+    Type: AWS::EC2::InternetGateway
+    Properties:
+      Tags:
+        - Key: Name
+          Value: !Sub ${AWS::StackName}-InternetGateway
+        - Key: Application
+          Value: !Ref "AWS::StackName"
+  GatewayToInternet:
+    Type: AWS::EC2::VPCGatewayAttachment
+    Properties:
+      VpcId: !Ref "VPC"
+      InternetGatewayId: !Ref "InternetGateway"
+  ## NAT Gateways
+  AZ1NAT:
+    DependsOn: GatewayToInternet
+    Type: AWS::EC2::NatGateway
+    Properties:
+      Tags:
+        - Key: Name
+          Value: !Sub ${AWS::StackName}-AZ1NAT
+        - Key: Application
+          Value: !Ref "AWS::StackName"
+      AllocationId:
+        Fn::GetAtt:
+          - AZ1NATEIP
+          - AllocationId
+      SubnetId: !Ref PublicSubnet1
+  AZ1NATEIP:
+    Type: AWS::EC2::EIP
+    Properties:
+      Domain: vpc
+  AZ2NAT:
+    DependsOn: GatewayToInternet
+    Type: AWS::EC2::NatGateway
+    Properties:
+      Tags:
+        - Key: Name
+          Value: !Sub ${AWS::StackName}-AZ2NAT
+        - Key: Application
+          Value: !Ref "AWS::StackName"
+      AllocationId:
+        Fn::GetAtt:
+          - AZ2NATEIP
+          - AllocationId
+      SubnetId: !Ref PublicSubnet2
+  AZ2NATEIP:
+    Type: AWS::EC2::EIP
+    Properties:
+      Domain: vpc
+  ## Routes and Route Tables
+  PublicRouteTable:
+    Type: AWS::EC2::RouteTable
+    Properties:
+      VpcId: !Ref "VPC"
+      Tags:
+        - Key: Name
+          Value: !Sub ${AWS::StackName}-PublicRouteTable
+        - Key: Application
+          Value: !Ref "AWS::StackName"
+  PublicRoute:
+    Type: AWS::EC2::Route
+    DependsOn: GatewayToInternet
+    Properties:
+      RouteTableId: !Ref "PublicRouteTable"
+      DestinationCidrBlock: 0.0.0.0/0
+      GatewayId: !Ref "InternetGateway"
+  PrivateSubnet1RouteTable:
+    Type: AWS::EC2::RouteTable
+    Properties:
+      VpcId: !Ref "VPC"
+      Tags:
+        - Key: Name
+          Value: !Sub ${AWS::StackName}-PrivateSubnet1RouteTable
+        - Key: Application
+          Value: !Ref "AWS::StackName"
+  PrivateSubnet2RouteTable:
+    Type: AWS::EC2::RouteTable
+    Properties:
+      VpcId: !Ref "VPC"
+      Tags:
+        - Key: Name
+          Value: !Sub ${AWS::StackName}-PrivateSubnet2RouteTable
+        - Key: Application
+          Value: !Ref "AWS::StackName"
+  AZ1Route:
+    Type: AWS::EC2::Route
+    Properties:
+      RouteTableId: !Ref "PrivateSubnet1RouteTable"
+      DestinationCidrBlock: 0.0.0.0/0
+      NatGatewayId: !Ref "AZ1NAT"
+  AZ2Route:
+    Type: AWS::EC2::Route
+    Properties:
+      RouteTableId: !Ref "PrivateSubnet2RouteTable"
+      DestinationCidrBlock: 0.0.0.0/0
+      NatGatewayId: !Ref "AZ2NAT"
+  ## Subnet Route Table Associations
+  AZ1PublicRouteTableAssociation:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      SubnetId: !Ref PublicSubnet1
+      RouteTableId: !Ref "PublicRouteTable"
+  AZ1PrivateRouteTableAssociation:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      SubnetId: !Ref PrivateSubnet1
+      RouteTableId: !Ref "PrivateSubnet1RouteTable"
+  AZ2PublicRouteTableAssociation:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      SubnetId: !Ref PublicSubnet2
+      RouteTableId: !Ref "PublicRouteTable"
+  AZ2PrivateRouteTableAssociation:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      SubnetId: !Ref PrivateSubnet2
+      RouteTableId: !Ref "PrivateSubnet2RouteTable"
+
+  ## Compute
+  AppAlb:
+    Type: AWS::ElasticLoadBalancingV2::LoadBalancer
+    Properties:
+      Scheme: internet-facing
+      Subnets:
+        - !Ref PublicSubnet1
+        - !Ref PublicSubnet2
+      SecurityGroups:
+        - !Ref AlbSecurityGroup
+      Type: application
+      Tags:
+        - Key: Name
+          Value: !Sub ${AWS::StackName}-Alb
+        - Key: Application
+          Value: !Ref "AWS::StackName"
+
+  AppAlbTargetGroup:
+    Type: AWS::ElasticLoadBalancingV2::TargetGroup
+    Properties:
+      Port: 80
+      Protocol: HTTP
+      TargetType: instance
+      HealthCheckTimeoutSeconds: 5
+      HealthCheckIntervalSeconds: 10
+      HealthyThresholdCount: 2
+      TargetGroupAttributes:
+        - Key: deregistration_delay.timeout_seconds
+          Value: 15
+      Tags:
+        - Key: Name
+          Value: !Sub ${AWS::StackName}-AppAlbTargetGroup
+        - Key: Application
+          Value: !Ref "AWS::StackName"
+      VpcId: !Ref VPC
+
+  AppAlbListener:
+    Type: AWS::ElasticLoadBalancingV2::Listener
+    Properties:
+      DefaultActions:
+        - Type: forward
+          TargetGroupArn: !Ref AppAlbTargetGroup
+      LoadBalancerArn: !Ref AppAlb
+      Port: 80
+      Protocol: HTTP
+
+  AlbSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: !Sub ${AWS::StackName}-AlbSG
+      Tags:
+        - Key: Name
+          Value: !Sub ${AWS::StackName}-AlbSG
+        - Key: Application
+          Value: !Ref "AWS::StackName"
+      VpcId: !Ref "VPC"
+      SecurityGroupEgress:
+        - IpProtocol: "tcp"
+          FromPort: 0
+          ToPort: 65535
+          CidrIp: "0.0.0.0/0"
+      SecurityGroupIngress:
+        - IpProtocol: "tcp"
+          FromPort: 80
+          ToPort: 80
+          CidrIp: "0.0.0.0/0"
+
+  AppSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: !Sub ${AWS::StackName}-AppTierSG
+      Tags:
+        - Key: Name
+          Value: !Sub ${AWS::StackName}-AppTierSG
+        - Key: Application
+          Value: !Ref "AWS::StackName"
+      VpcId: !Ref VPC
+      SecurityGroupIngress:
+        - IpProtocol: tcp
+          FromPort: 80
+          ToPort: 80
+          SourceSecurityGroupId: !GetAtt AlbSecurityGroup.GroupId
+
+  AutoScalingGroup:
+    Type: AWS::AutoScaling::AutoScalingGroup
+    Properties:
+      DesiredCapacity: 2
+      LaunchConfigurationName: !Ref LaunchConfig
+      MinSize: 1
+      MaxSize: 2
+      VPCZoneIdentifier:
+        - !Ref PrivateSubnet1
+        - !Ref PrivateSubnet2
+      TargetGroupARNs:
+        - !Ref AppAlbTargetGroup
+      Tags:
+        - Key: Name
+          Value: !Sub ${AWS::StackName}-ASG
+          PropagateAtLaunch: true
+        - Key: Application
+          Value: !Ref AWS::StackName
+          PropagateAtLaunch: true
+    UpdatePolicy:
+      AutoScalingRollingUpdate:
+        MaxBatchSize: 1
+        MinInstancesInService: 2
+        PauseTime: PT5M
+
+  AppInstanceProfile:
+    Type: AWS::IAM::InstanceProfile
+    Properties:
+      Path: "/"
+      Roles: [!Ref AppInstanceRole]
+
+  AppInstanceRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: 2012-10-17
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: ec2.amazonaws.com
+            Action: sts:AssumeRole
+      Path: "/"
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/service-role/AmazonEC2RoleforAWSCodeDeploy
+        - arn:aws:iam::aws:policy/AmazonSSMManagedInstanceCore
+
+  LaunchConfig:
+    Type: AWS::AutoScaling::LaunchConfiguration
+    Properties:
+      ImageId: !Ref WindowsAmiId
+      InstanceType: t3.micro
+      AssociatePublicIpAddress: false
+      IamInstanceProfile: !Ref AppInstanceProfile
+      SecurityGroups:
+        - !Ref AppSecurityGroup
+      BlockDeviceMappings:
+        - DeviceName: /dev/xvda
+          Ebs:
+            VolumeSize: 30
+            VolumeType: gp2
+            DeleteOnTermination: true
+      UserData:
+        Fn::Base64: !Sub |
+          <powershell>
+          # Download and install the CodeDeploy agent
+          New-Item -Path C:\CodeDeployAgent -ItemType "directory" -Force
+          powershell.exe -Command Read-S3Object -BucketName aws-codedeploy-${AWS::Region}/latest -Key codedeploy-agent.msi -File C:\CodeDeployAgent\codedeploy-agent.msi
+          Start-Process -Wait -FilePath c:\CodeDeployAgent\codedeploy-agent.msi -WindowStyle Hidden
+          </powershell>
+
+  CodeDeployServiceRole:
+    Type: AWS::IAM::Role
+    Properties:
+      Path: /
+      AssumeRolePolicyDocument:
+        Version: 2012-10-17
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: codedeploy.amazonaws.com
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        ["arn:aws:iam::aws:policy/service-role/AWSCodeDeployRole"]
+
+  CodeDeployApplication:
+    Type: AWS::CodeDeploy::Application
+    Properties:
+      ApplicationName: !Sub ${AWS::StackName}-App
+      ComputePlatform: Server
+
+  CodeDeployDeploymentGroup:
+    Type: AWS::CodeDeploy::DeploymentGroup
+    Properties:
+      ApplicationName: !Ref CodeDeployApplication
+      ServiceRoleArn: !GetAtt CodeDeployServiceRole.Arn
+      DeploymentGroupName: example-deployment-group
+      AutoRollbackConfiguration:
+        Enabled: True
+        Events: [DEPLOYMENT_FAILURE]
+      DeploymentConfigName: CodeDeployDefault.HalfAtATime
+      DeploymentStyle:
+        DeploymentOption: WITH_TRAFFIC_CONTROL
+        DeploymentType: IN_PLACE
+      AutoScalingGroups: [ !Ref AutoScalingGroup ] 
+      LoadBalancerInfo:
+        TargetGroupInfoList:
+          - Name: !GetAtt AppAlbTargetGroup.TargetGroupName
+  
+## Custom Resource to create a Blue/GreenDeployment Group
+  UpdateDeploymentGroupRole:
+    Type: AWS::IAM::Role
+    Properties:
+      Path: /
+      ManagedPolicyArns: [ 'arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole' ]
+      AssumeRolePolicyDocument:
+        Version: 2012-10-17
+        Statement:
+        - Effect: Allow
+          Principal:
+            Service: lambda.amazonaws.com
+          Action: sts:AssumeRole
+      Policies:
+      - PolicyName: AllowUpdateCodeDeployGroup
+        PolicyDocument:
+          Version: 2012-10-17
+          Statement:
+          - Action: [ 'codedeploy:UpdateDeploymentGroup' ]
+            Effect: Allow
+            Resource: !Sub arn:aws:codedeploy:${AWS::Region}:${AWS::AccountId}:deploymentgroup:${CodeDeployApplication}/${CodeDeployDeploymentGroup}
+
+  # The Lambda that modifies the configuration to use blue/green
+  UpdateDeploymentGroupFunction:
+    Type: AWS::Lambda::Function
+    Condition: UseBlueGreen
+    Properties:
+      Runtime: python3.7
+      Role: !GetAtt UpdateDeploymentGroupRole.Arn
+      Handler: index.handler
+      Code:
+        ZipFile: 
+          !Sub |
+            import boto3
+            import cfnresponse
+            import logging
+            import traceback
+            logger = logging.getLogger()
+            logger.setLevel(logging.INFO)
+
+            def handler(event, context):
+              responseData = {}
+              if event['RequestType'] == 'Create':
+                try:
+                  client = boto3.client('codedeploy')
+                  client.update_deployment_group(
+                    applicationName = '${CodeDeployApplication}',
+                    currentDeploymentGroupName = '${CodeDeployDeploymentGroup}',
+                    autoScalingGroups = ['${AutoScalingGroup}'],
+                    deploymentStyle = {
+                      'deploymentType': 'BLUE_GREEN',
+                      'deploymentOption': 'WITH_TRAFFIC_CONTROL'
+                    },
+                    blueGreenDeploymentConfiguration = {
+                      'terminateBlueInstancesOnDeploymentSuccess': {
+                        'action': 'TERMINATE',
+                        'terminationWaitTimeInMinutes': 30
+                      },
+                      'deploymentReadyOption': {
+                        'actionOnTimeout': 'CONTINUE_DEPLOYMENT'
+                      },
+                      'greenFleetProvisioningOption': {
+                        'action': 'COPY_AUTO_SCALING_GROUP'
+                      }
+                    }
+                  )
+                  cfnresponse.send(event, context, cfnresponse.SUCCESS, responseData, 'CustomResourcePhysicalID')
+                except Exception as e:
+                  logger.error(e, exc_info=True)
+                  responseData = {'Error': traceback.format_exc(e) }
+                  cfnresponse.send(event, context, cfnresponse.FAILED, responseData, 'CustomResourcePhysicalID')
+              else:
+                cfnresponse.send(event, context, cfnresponse.SUCCESS, responseData, 'CustomResourcePhysicalID')
+
+  # A custom resource to trigger the reconfiguration
+  UpdateDeploymentGroup:
+    Type: Custom::UpdateDeploymentGroup
+    Condition: UseBlueGreen
+    DependsOn: CodeDeployDeploymentGroup
+    Properties:
+      ServiceToken: !GetAtt UpdateDeploymentGroupFunction.Arn
+
+Outputs:
+  LoadBalancerUrl:
+    Value: !Sub "http://${AppAlb.DNSName}/"
