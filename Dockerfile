@@ -5,7 +5,7 @@ COPY . .
 RUN dotnet restore
 RUN dotnet publish -c Release -o /app
 # Stage 2
-FROM mcr.microsoft.com/dotnet/core/aspnet:3.0-buster-slim AS runtime
+FROM mcr.microsoft.com/dotnet/core/aspnet:3.1 AS runtime
 WORKDIR /app
 COPY --from=build /app .
-ENTRYPOINT ["dotnet", "BeanstalkExampleCore.dll"]
+ENTRYPOINT ["dotnet", "ASPNETCoreDemo.dll"]
