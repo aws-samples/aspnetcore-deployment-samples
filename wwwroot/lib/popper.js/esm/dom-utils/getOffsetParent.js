@@ -17,13 +17,26 @@ function getTrueOffsetParent(element) {
 
 
 function getContainingBlock(element) {
+  var isFirefox = navigator.userAgent.toLowerCase().indexOf('firefox') !== -1;
+  var isIE = navigator.userAgent.indexOf('Trident') !== -1;
+
+  if (isIE && isHTMLElement(element)) {
+    // In IE 9, 10 and 11 fixed elements containing block is always established by the viewport
+    var elementCss = getComputedStyle(element);
+
+    if (elementCss.position === 'fixed') {
+      return null;
+    }
+  }
+
   var currentNode = getParentNode(element);
 
   while (isHTMLElement(currentNode) && ['html', 'body'].indexOf(getNodeName(currentNode)) < 0) {
     var css = getComputedStyle(currentNode); // This is non-exhaustive but covers the most common CSS properties that
     // create a containing block.
+    // https://developer.mozilla.org/en-US/docs/Web/CSS/Containing_block#identifying_the_containing_block
 
-    if (css.transform !== 'none' || css.perspective !== 'none' || css.willChange !== 'auto') {
+    if (css.transform !== 'none' || css.perspective !== 'none' || css.contain === 'paint' || ['transform', 'perspective'].indexOf(css.willChange) !== -1 || isFirefox && css.willChange === 'filter' || isFirefox && css.filter && css.filter !== 'none') {
       return currentNode;
     } else {
       currentNode = currentNode.parentNode;
@@ -43,7 +56,7 @@ export default function getOffsetParent(element) {
     offsetParent = getTrueOffsetParent(offsetParent);
   }
 
-  if (offsetParent && getNodeName(offsetParent) === 'body' && getComputedStyle(offsetParent).position === 'static') {
+  if (offsetParent && (getNodeName(offsetParent) === 'html' || getNodeName(offsetParent) === 'body' && getComputedStyle(offsetParent).position === 'static')) {
     return window;
   }
 

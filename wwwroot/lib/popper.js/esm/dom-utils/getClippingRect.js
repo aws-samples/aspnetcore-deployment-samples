@@ -7,8 +7,11 @@ import getDocumentElement from "./getDocumentElement.js";
 import getComputedStyle from "./getComputedStyle.js";
 import { isElement, isHTMLElement } from "./instanceOf.js";
 import getBoundingClientRect from "./getBoundingClientRect.js";
+import getParentNode from "./getParentNode.js";
 import contains from "./contains.js";
+import getNodeName from "./getNodeName.js";
 import rectToClientRect from "../utils/rectToClientRect.js";
+import { max, min } from "../utils/math.js";
 
 function getInnerBoundingClientRect(element) {
   var rect = getBoundingClientRect(element);
@@ -31,17 +34,17 @@ function getClientRectFromMixedType(element, clippingParent) {
 
 
 function getClippingParents(element) {
-  var clippingParents = listScrollParents(element);
+  var clippingParents = listScrollParents(getParentNode(element));
   var canEscapeClipping = ['absolute', 'fixed'].indexOf(getComputedStyle(element).position) >= 0;
   var clipperElement = canEscapeClipping && isHTMLElement(element) ? getOffsetParent(element) : element;
 
   if (!isElement(clipperElement)) {
     return [];
-  } // $FlowFixMe: https://github.com/facebook/flow/issues/1414
+  } // $FlowFixMe[incompatible-return]: https://github.com/facebook/flow/issues/1414
 
 
   return clippingParents.filter(function (clippingParent) {
-    return isElement(clippingParent) && contains(clippingParent, clipperElement);
+    return isElement(clippingParent) && contains(clippingParent, clipperElement) && getNodeName(clippingParent) !== 'body';
   });
 } // Gets the maximum area that the element is visible in due to any number of
 // clipping parents
@@ -53,10 +56,10 @@ export default function getClippingRect(element, boundary, rootBoundary) {
   var firstClippingParent = clippingParents[0];
   var clippingRect = clippingParents.reduce(function (accRect, clippingParent) {
     var rect = getClientRectFromMixedType(element, clippingParent);
-    accRect.top = Math.max(rect.top, accRect.top);
-    accRect.right = Math.min(rect.right, accRect.right);
-    accRect.bottom = Math.min(rect.bottom, accRect.bottom);
-    accRect.left = Math.max(rect.left, accRect.left);
+    accRect.top = max(rect.top, accRect.top);
+    accRect.right = min(rect.right, accRect.right);
+    accRect.bottom = min(rect.bottom, accRect.bottom);
+    accRect.left = max(rect.left, accRect.left);
     return accRect;
   }, getClientRectFromMixedType(element, firstClippingParent));
   clippingRect.width = clippingRect.right - clippingRect.left;
