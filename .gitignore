@@ -30,6 +30,7 @@ bld/
 [Oo]bj/
 [Oo]ut/
 [Dd]eployment/
+wwwroot/lib/
 msbuild.log
 msbuild.err
 msbuild.wrn
